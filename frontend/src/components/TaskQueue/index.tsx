@@ -89,15 +89,24 @@ function TaskCard({ task, onCancelled }: { task: TaskResult; onCancelled: () => 
         {task.metadata?.prompt || 'Unknown prompt'}
       </p>
 
-      {/* Progress bar */}
-      {isActive_ && (
-        <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden mb-2">
-          <div
-            className="h-full bg-gradient-to-r from-accent-blue to-accent-purple transition-all duration-500"
-            style={{ width: `${task.progress || 0}%` }}
-          />
-        </div>
-      )}
+      {/* Progress bar — pulse when near completion (worker is finishing up) */}
+      {isActive_ && (() => {
+        const pct = task.progress || 0
+        const nearDone = pct >= 90
+        return (
+          <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden mb-2 relative">
+            {nearDone ? (
+              /* Indeterminate shimmer: ACE-Step is rendering, we have no ETA */
+              <div className="absolute inset-0 bg-gradient-to-r from-accent-blue via-accent-purple to-accent-blue bg-[length:200%_100%] animate-[shimmer_1.5s_linear_infinite]" />
+            ) : (
+              <div
+                className="h-full bg-gradient-to-r from-accent-blue to-accent-purple transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            )}
+          </div>
+        )
+      })()}
 
       {/* Meta row */}
       <div className="flex items-center gap-3 text-xs font-mono text-slate-500 flex-wrap">

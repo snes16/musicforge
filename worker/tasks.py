@@ -165,11 +165,15 @@ def generate_music(self, task_id: str, request: dict):
                 deadline = start_time + MAX_POLL_TIME
                 poll = 0
                 while time.time() < deadline:
+                    # Check cancel before AND after sleep so we react within ~1s
                     if _is_cancelled(task_id, r):
                         raise _TaskCancelled()
 
                     time.sleep(POLL_INTERVAL)
                     poll += 1
+
+                    if _is_cancelled(task_id, r):
+                        raise _TaskCancelled()
 
                     qr = client.post(
                         "/query_result",
@@ -183,12 +187,19 @@ def generate_music(self, task_id: str, request: dict):
                     item = items[0]
                     acestep_status = item.get("status", 0)
 
-                    # Smooth progress: 0→90 over the first duration*2 seconds
+                    # Asymptotic progress: approaches 98, never reaches it.
+                    # half_life = duration/4 so the bar hits ~75% around the expected
+                    # finish time on a fast GPU (RTX 5070 does ~15–20s per 60s song).
                     elapsed = time.time() - start_time
-                    progress = min(90, int(elapsed / (duration * 2) * 90))
+                    half_life = max(duration / 4, 10)
+                    progress = int(98 * (1 - 0.5 ** (elapsed / half_life)))
                     _update_task(task_id, r=r, progress=progress)
 
                     if acestep_status == 1:
+                        # One last cancel check before we commit to "completed"
+                        if _is_cancelled(task_id, r):
+                            raise _TaskCancelled()
+
                         # result is a JSON-encoded string → list of objects
                         try:
                             result_obj = json.loads(item.get("result", "[]"))

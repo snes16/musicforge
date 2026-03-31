@@ -69,6 +69,12 @@ html.light .text-slate-500 { color: #64748b; }
 html.light .text-slate-600 { color: #94a3b8; }
 html.light .text-slate-700 { color: #94a3b8; }
 
+/* ── Shimmer animation for indeterminate progress bar ────── */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 /* ── Glassmorphism panels ─────────────────────────────────── */
 @layer components {
   .glass-panel {
