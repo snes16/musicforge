@@ -188,18 +188,20 @@ def generate_music(self, task_id: str, request: dict):
 
                     item = items[0]
                     acestep_status = item.get("status", 0)
-                    # Log every poll so we can see exactly what changes
-                    logger.info(f"[{task_id}] poll={poll} status={acestep_status!r} result_preview={str(item.get('result',''))[:120]}")
+                    # Log every poll — need to see the raw value to debug
+                    logger.warning(f"[POLL] poll={poll} status={acestep_status!r} type={type(acestep_status).__name__} keys={list(item.keys())} result_preview={str(item.get('result',''))[:200]}")
 
                     # Asymptotic progress: approaches 98, never reaches it.
-                    # half_life = duration/4 so the bar hits ~75% around the expected
-                    # finish time on a fast GPU (RTX 5070 does ~15–20s per 60s song).
                     elapsed = time.time() - start_time
                     half_life = max(duration / 4, 10)
                     progress = int(98 * (1 - 0.5 ** (elapsed / half_life)))
                     _update_task(task_id, r=r, progress=progress)
 
-                    if acestep_status == 1:
+                    # Accept status 1 (int) or "1" / "success" / "completed" (str)
+                    is_success = acestep_status == 1 or str(acestep_status) in ("1", "success", "completed", "done")
+                    is_failed  = acestep_status == 2 or str(acestep_status) in ("2", "failed", "error")
+
+                    if is_success:
                         # One last cancel check before we commit to "completed"
                         if _is_cancelled(task_id, r):
                             raise _TaskCancelled()
@@ -232,7 +234,7 @@ def generate_music(self, task_id: str, request: dict):
                             f.write(audio_resp.content)
                         break
 
-                    elif acestep_status == 2:
+                    elif is_failed:
                         raise RuntimeError(
                             f"ACE-Step generation failed for task {acestep_task_id}"
                         )
