@@ -154,8 +154,8 @@ def generate_music(self, task_id: str, request: dict):
             if lora_name:
                 payload["lora_name"] = lora_name
 
-            with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=60.0) as client:
-                # 1. Submit
+            with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=300.0) as client:
+                # 1. Submit — long timeout because ACE-Step may be loading model
                 resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
                 acestep_task_id = resp.json().get("task_id")
