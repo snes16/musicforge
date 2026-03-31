@@ -124,7 +124,6 @@ function TaskCard({ task, onCancelled }: { task: TaskResult; onCancelled: () => 
 
 export function TaskQueue() {
   const { tasks, setTasks } = useMusicStore()
-  const queryClient = useQueryClient()
 
   const { refetch } = useQuery({
     queryKey: ['tasks-list'],
