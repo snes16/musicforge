@@ -180,12 +180,16 @@ def generate_music(self, task_id: str, request: dict):
                         json={"task_id_list": [acestep_task_id]},
                     )
                     qr.raise_for_status()
-                    items = qr.json().get("data", [])
+                    raw_response = qr.json()
+                    if poll % 10 == 1:  # log every ~10s to avoid spam
+                        logger.info(f"[{task_id}] query_result (poll={poll}): {raw_response}")
+                    items = raw_response.get("data", [])
                     if not items:
                         continue
 
                     item = items[0]
                     acestep_status = item.get("status", 0)
+                    logger.debug(f"[{task_id}] poll={poll} ACE-Step status={acestep_status}")
 
                     # Asymptotic progress: approaches 98, never reaches it.
                     # half_life = duration/4 so the bar hits ~75% around the expected
