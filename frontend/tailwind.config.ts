@@ -2,15 +2,16 @@ import type { Config } from 'tailwindcss'
 
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {
         bg: {
-          primary: '#0a0a0f',
-          secondary: '#12121a',
-          tertiary: '#1a1a26',
-          card: '#16161f',
-          border: '#252535',
+          primary: 'rgb(var(--bg-primary) / <alpha-value>)',
+          secondary: 'rgb(var(--bg-secondary) / <alpha-value>)',
+          tertiary: 'rgb(var(--bg-tertiary) / <alpha-value>)',
+          card: 'rgb(var(--bg-card) / <alpha-value>)',
+          border: 'rgb(var(--bg-border) / <alpha-value>)',
         },
         accent: {
           blue: '#3b82f6',

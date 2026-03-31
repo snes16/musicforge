@@ -2,12 +2,32 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Dark theme (default) ─────────────────────────────────── */
 :root {
-  --bg-primary: #0a0a0f;
-  --bg-secondary: #12121a;
-  --bg-tertiary: #1a1a26;
+  --bg-primary: 10 10 15;
+  --bg-secondary: 18 18 26;
+  --bg-tertiary: 26 26 38;
+  --bg-card: 22 22 31;
+  --bg-border: 37 37 53;
   --accent-blue: #3b82f6;
   --accent-purple: #8b5cf6;
+  --text-base: #e2e8f0;
+  --scrollbar-track: #12121a;
+  --scrollbar-thumb: #252535;
+  --range-track: #252535;
+}
+
+/* ── Light theme ──────────────────────────────────────────── */
+html.light {
+  --bg-primary: 248 250 252;
+  --bg-secondary: 255 255 255;
+  --bg-tertiary: 241 245 249;
+  --bg-card: 255 255 255;
+  --bg-border: 203 213 225;
+  --text-base: #1e293b;
+  --scrollbar-track: #f1f5f9;
+  --scrollbar-thumb: #cbd5e1;
+  --range-track: #e2e8f0;
 }
 
 * {
@@ -18,12 +38,22 @@
 
 html,
 body {
-  background-color: var(--bg-primary);
-  color: #e2e8f0;
+  background-color: rgb(var(--bg-primary));
+  color: var(--text-base);
   font-family: 'Inter', system-ui, sans-serif;
   min-height: 100vh;
   overflow-x: hidden;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
+
+/* ── Slate text overrides for light theme ─────────────────── */
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #475569; }
+html.light .text-slate-500 { color: #64748b; }
+html.light .text-slate-600 { color: #94a3b8; }
+html.light .text-slate-700 { color: #94a3b8; }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
@@ -31,10 +61,10 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #12121a;
+  background: var(--scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: #252535;
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -56,7 +86,7 @@ input[type='range'] {
 }
 input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
-  background: #252535;
+  background: var(--range-track);
   border-radius: 2px;
 }
 input[type='range']::-webkit-slider-thumb {

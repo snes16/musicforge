@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { GenerateForm } from './components/GenerateForm'
 import { AudioPlayer } from './components/AudioPlayer'
 import { TaskQueue } from './components/TaskQueue'
@@ -6,7 +6,44 @@ import { GPUDashboard } from './components/GPUDashboard'
 import { TrackHistory } from './components/TrackHistory'
 import { useMusicStore } from './stores/musicStore'
 
-function Header() {
+function useTheme() {
+  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('theme')
+    if (saved === 'light' || saved === 'dark') return saved
+    return 'dark'
+  })
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (theme === 'light') {
+      root.classList.add('light')
+    } else {
+      root.classList.remove('light')
+    }
+    localStorage.setItem('theme', theme)
+  }, [theme])
+
+  return { theme, toggle: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')) }
+}
+
+function SunIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+    </svg>
+  )
+}
+
+function MoonIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </svg>
+  )
+}
+
+function Header({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
   return (
     <header className="border-b border-bg-border bg-bg-secondary/80 backdrop-blur-sm sticky top-0 z-10">
       <div className="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between">
@@ -44,6 +81,13 @@ function Header() {
           >
             ACE-Step
           </a>
+          <button
+            onClick={onToggle}
+            title={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+            className="p-1.5 rounded-md hover:text-accent-blue hover:bg-bg-tertiary transition-colors"
+          >
+            {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
+          </button>
         </div>
       </div>
     </header>
@@ -55,10 +99,11 @@ type View = 'studio' | 'history'
 export default function App() {
   const currentTrack = useMusicStore((s) => s.currentTrack)
   const [view, setView] = useState<View>('studio')
+  const { theme, toggle } = useTheme()
 
   return (
     <div className="min-h-screen bg-bg-primary text-slate-200 flex flex-col">
-      <Header />
+      <Header theme={theme} onToggle={toggle} />
 
       {/* Nav tabs */}
       <div className="border-b border-bg-border bg-bg-secondary/40">
