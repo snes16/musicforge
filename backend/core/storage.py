@@ -12,6 +12,7 @@ _redis_client: Optional[redis_sync.Redis] = None
 
 TASK_PREFIX = "musicforge:task:"
 TASK_LIST_KEY = "musicforge:tasks"
+CANCEL_PREFIX = "musicforge:cancel:"
 
 
 def get_redis() -> redis_sync.Redis:
@@ -102,6 +103,12 @@ def get_queue_position(task_id: str) -> int:
         return queued.index(task_id) + 1
     except ValueError:
         return 0
+
+
+def set_cancel_flag(task_id: str, ttl: int = 3600) -> None:
+    """Set a Redis key that signals the worker to cancel this task."""
+    r = get_redis()
+    r.set(f"{CANCEL_PREFIX}{task_id}", "1", ex=ttl)
 
 
 def save_audio_file(task_id: str, audio_bytes: bytes, extension: str = "wav") -> str:

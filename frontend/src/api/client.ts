@@ -21,7 +21,7 @@ export interface GenerateRequest {
 
 export interface GenerateResponse {
   task_id: string
-  status: 'queued' | 'processing' | 'completed' | 'failed'
+  status: TaskStatus
   estimated_seconds: number
   position_in_queue: number
 }
@@ -35,7 +35,7 @@ export interface TaskMetadata {
   duration?: number
 }
 
-export type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed'
+export type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
 
 export interface TaskResult {
   task_id: string

@@ -24,6 +24,11 @@ AUDIO_OUTPUT_DIR = os.environ.get("AUDIO_OUTPUT_DIR", "/app/audio_output")
 MOCK_ACESTEP = os.environ.get("MOCK_ACESTEP", "true").lower() == "true"
 
 TASK_PREFIX = "musicforge:task:"
+CANCEL_PREFIX = "musicforge:cancel:"
+
+# Timeout: 20 min (1200 polls × 1 s). ACE-Step can be slow on first run.
+POLL_INTERVAL = 1        # seconds between /query_result calls
+MAX_POLL_TIME = 1200     # seconds total before giving up
 
 # Celery app
 app = Celery("worker", broker=REDIS_URL, backend=REDIS_URL)
@@ -43,14 +48,19 @@ def _get_redis():
     return redis_sync.from_url(REDIS_URL, decode_responses=True)
 
 
-def _update_task(task_id: str, **kwargs):
-    r = _get_redis()
+def _update_task(task_id: str, r=None, **kwargs):
+    if r is None:
+        r = _get_redis()
     raw = r.get(f"{TASK_PREFIX}{task_id}")
     if not raw:
         return
     task = json.loads(raw)
     task.update(kwargs)
     r.set(f"{TASK_PREFIX}{task_id}", json.dumps(task), ex=86400)
+
+
+def _is_cancelled(task_id: str, r) -> bool:
+    return bool(r.get(f"{CANCEL_PREFIX}{task_id}"))
 
 
 def _write_mock_wav(dest_path: str, duration_seconds: int = 5, sample_rate: int = 44100):
@@ -85,6 +95,10 @@ def _write_mock_wav(dest_path: str, duration_seconds: int = 5, sample_rate: int 
             f.write(sample * num_channels)
 
 
+class _TaskCancelled(Exception):
+    pass
+
+
 @app.task(bind=True, name="worker.tasks.generate_music", max_retries=3)
 def generate_music(self, task_id: str, request: dict):
     """
@@ -92,63 +106,75 @@ def generate_music(self, task_id: str, request: dict):
 
     Steps:
     1. Update status → processing, progress=0
-    2. Call ACE-Step API or mock
-    3. Poll/wait for completion, update progress=50
-    4. Save audio file
+    2. Submit to ACE-Step via POST /release_task (or mock)
+    3. Poll POST /query_result every POLL_INTERVAL seconds
+       — checks cancel flag on each iteration
+    4. Download audio, save locally
     5. Update status → completed, progress=100
     """
     start_time = time.time()
     logger.info(f"[{task_id}] Starting music generation: {request.get('prompt', '')[:60]}")
 
+    r = _get_redis()  # reuse one connection throughout the task
+
     try:
-        _update_task(task_id, status="processing", progress=0)
+        _update_task(task_id, r=r, status="processing", progress=0)
 
         prompt = request.get("prompt", "")
         lyrics = request.get("lyrics", "")
         duration = int(request.get("duration", 60))
         lora_name = request.get("lora_name", "")
-        style_preset = request.get("style_preset", "")  # kept for backward compat, not sent to ACE-Step v1.5
 
         os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
         audio_filename = f"{task_id}.wav"
         audio_path = os.path.join(AUDIO_OUTPUT_DIR, audio_filename)
 
         if MOCK_ACESTEP:
-            # Simulate generation with sleep
             logger.info(f"[{task_id}] Mock mode: simulating generation...")
-            time.sleep(2)
-            _update_task(task_id, progress=25)
-            time.sleep(2)
-            _update_task(task_id, progress=50)
-            time.sleep(2)
-            _update_task(task_id, progress=75)
+            steps = [(1, 25), (1, 50), (1, 75)]
+            for sleep_s, prog in steps:
+                if _is_cancelled(task_id, r):
+                    raise _TaskCancelled()
+                time.sleep(sleep_s)
+                _update_task(task_id, r=r, progress=prog)
 
-            mock_dur = min(duration, 10)  # mock: generate short file
+            if _is_cancelled(task_id, r):
+                raise _TaskCancelled()
+
+            mock_dur = min(duration, 10)
             _write_mock_wav(audio_path, duration_seconds=mock_dur)
-            _update_task(task_id, progress=90)
+            _update_task(task_id, r=r, progress=90)
 
         else:
-            # Real ACE-Step API (v1.5 endpoints)
+            # Real ACE-Step API (v1.5)
             headers = {"Authorization": f"Bearer {ACESTEP_API_KEY}"}
-            payload = {"prompt": prompt, "duration": duration}
+            payload: dict = {"prompt": prompt, "duration": duration}
             if lyrics:
                 payload["lyrics"] = lyrics
             if lora_name:
                 payload["lora_name"] = lora_name
 
-            with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=300.0) as client:
-                # 1. Submit task
+            with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=60.0) as client:
+                # 1. Submit
                 resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
                 acestep_task_id = resp.json().get("task_id")
                 logger.info(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
 
-                # 2. Poll via /query_result
-                # statuses: 0=pending, 1=success, 2=failed
-                max_polls = 180  # 6 minutes at 2s interval
-                for poll in range(max_polls):
-                    time.sleep(2)
-                    qr = client.post("/query_result", json={"task_id_list": [acestep_task_id]})
+                # 2. Poll — statuses: 0=pending, 1=success, 2=failed
+                deadline = start_time + MAX_POLL_TIME
+                poll = 0
+                while time.time() < deadline:
+                    if _is_cancelled(task_id, r):
+                        raise _TaskCancelled()
+
+                    time.sleep(POLL_INTERVAL)
+                    poll += 1
+
+                    qr = client.post(
+                        "/query_result",
+                        json={"task_id_list": [acestep_task_id]},
+                    )
                     qr.raise_for_status()
                     items = qr.json().get("data", [])
                     if not items:
@@ -157,11 +183,13 @@ def generate_music(self, task_id: str, request: dict):
                     item = items[0]
                     acestep_status = item.get("status", 0)
 
-                    progress = min(90, int((poll / max_polls) * 90))
-                    _update_task(task_id, progress=progress)
+                    # Smooth progress: 0→90 over the first duration*2 seconds
+                    elapsed = time.time() - start_time
+                    progress = min(90, int(elapsed / (duration * 2) * 90))
+                    _update_task(task_id, r=r, progress=progress)
 
                     if acestep_status == 1:
-                        # result is a JSON-encoded string; parse twice to get list
+                        # result is a JSON-encoded string → list of objects
                         try:
                             result_obj = json.loads(item.get("result", "[]"))
                             if isinstance(result_obj, list) and result_obj:
@@ -173,24 +201,28 @@ def generate_music(self, task_id: str, request: dict):
                         except (ValueError, TypeError):
                             remote_path = ""
 
-                        # remote_path looks like "/v1/audio?path=..." — use full URL
                         audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
                         logger.info(f"[{task_id}] Downloading audio from {audio_url}")
-                        audio_resp = client.get(audio_url)
+                        audio_resp = client.get(audio_url, timeout=120.0)
                         audio_resp.raise_for_status()
-                        os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
                         with open(audio_path, "wb") as f:
                             f.write(audio_resp.content)
                         break
+
                     elif acestep_status == 2:
-                        raise RuntimeError(f"ACE-Step generation failed for task {acestep_task_id}")
+                        raise RuntimeError(
+                            f"ACE-Step generation failed for task {acestep_task_id}"
+                        )
                 else:
-                    raise TimeoutError("ACE-Step generation timed out after 6 minutes")
+                    raise TimeoutError(
+                        f"ACE-Step timed out after {MAX_POLL_TIME // 60} minutes"
+                    )
 
         generation_time = round(time.time() - start_time, 2)
 
         _update_task(
             task_id,
+            r=r,
             status="completed",
             progress=100,
             audio_url=f"/audio/{audio_filename}",
@@ -201,7 +233,15 @@ def generate_music(self, task_id: str, request: dict):
         logger.info(f"[{task_id}] Completed in {generation_time}s. Audio: {audio_path}")
         return {"task_id": task_id, "status": "completed", "audio_url": f"/audio/{audio_filename}"}
 
+    except _TaskCancelled:
+        logger.info(f"[{task_id}] Cancelled by user request")
+        _update_task(task_id, r=r, status="cancelled", progress=0)
+        # Don't retry cancellations
+        return {"task_id": task_id, "status": "cancelled"}
+
     except Exception as exc:
         logger.exception(f"[{task_id}] Generation failed: {exc}")
-        _update_task(task_id, status="failed", progress=0, error=str(exc))
-        raise self.retry(exc=exc, countdown=5) if self.request.retries < self.max_retries else exc
+        _update_task(task_id, r=r, status="failed", progress=0, error=str(exc))
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=5)
+        raise

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query
 from schemas.task import TaskResult, TaskListResponse, TaskStatusEnum, TaskMetadata
-from core.storage import list_tasks, get_task, delete_task
+from core.storage import list_tasks, get_task, delete_task, set_cancel_flag, update_task
 
 router = APIRouter()
 
@@ -44,16 +44,20 @@ async def list_all_tasks(
 
 @router.delete("/tasks/{task_id}")
 async def cancel_task(task_id: str):
-    """Cancel or delete a task."""
+    """Cancel a queued/processing task or delete a finished one."""
     task = get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    if task.get("status") == "processing":
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot delete a task that is currently processing",
-        )
+    status = task.get("status")
+
+    if status in ("queued", "processing"):
+        # Signal the worker to stop; it will notice on the next poll iteration.
+        set_cancel_flag(task_id)
+        # Mark immediately so the UI reflects the change without waiting for the
+        # next worker poll.
+        update_task(task_id, status="cancelled", progress=0)
+        return {"message": f"Task {task_id} cancellation requested"}
 
     deleted = delete_task(task_id)
     if not deleted:

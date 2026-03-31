@@ -8,6 +8,7 @@ class TaskStatusEnum(str, Enum):
     processing = "processing"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
 
 
 class TaskMetadata(BaseModel):

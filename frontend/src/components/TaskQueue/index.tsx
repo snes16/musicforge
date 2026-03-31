@@ -4,13 +4,14 @@ import { api, type TaskResult, type TaskStatus } from '../../api/client'
 import { useMusicStore } from '../../stores/musicStore'
 
 function StatusBadge({ status }: { status: TaskStatus }) {
-  const config = {
-    queued: { label: 'Queued', cls: 'text-slate-400 bg-slate-400/10' },
-    processing: { label: 'Processing', cls: 'text-accent-blue bg-accent-blue/10' },
-    completed: { label: 'Done', cls: 'text-status-completed bg-status-completed/10' },
-    failed: { label: 'Failed', cls: 'text-status-failed bg-status-failed/10' },
+  const config: Record<TaskStatus, { label: string; cls: string }> = {
+    queued:     { label: 'Queued',      cls: 'text-slate-400 bg-slate-400/10' },
+    processing: { label: 'Processing',  cls: 'text-accent-blue bg-accent-blue/10' },
+    completed:  { label: 'Done',        cls: 'text-status-completed bg-status-completed/10' },
+    failed:     { label: 'Failed',      cls: 'text-status-failed bg-status-failed/10' },
+    cancelled:  { label: 'Cancelled',   cls: 'text-slate-500 bg-slate-500/10' },
   }
-  const { label, cls } = config[status] || config.queued
+  const { label, cls } = config[status] ?? config.queued
 
   return (
     <span className={`text-xs font-mono px-2 py-0.5 rounded-full ${cls}`}>
@@ -22,9 +23,40 @@ function StatusBadge({ status }: { status: TaskStatus }) {
   )
 }
 
-function TaskCard({ task }: { task: TaskResult }) {
+function CancelButton({ taskId, onCancel }: { taskId: string; onCancel: () => void }) {
+  const [loading, setLoading] = React.useState(false)
+
+  const handleCancel = async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    setLoading(true)
+    try {
+      await api.deleteTask(taskId)
+      onCancel()
+    } catch {
+      // ignore — the task list will refresh anyway
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <button
+      onClick={handleCancel}
+      disabled={loading}
+      title="Cancel task"
+      className="p-1 rounded text-slate-600 hover:text-status-failed hover:bg-status-failed/10 transition-colors disabled:opacity-40"
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+        <path d="M18 6 6 18M6 6l12 12" />
+      </svg>
+    </button>
+  )
+}
+
+function TaskCard({ task, onCancelled }: { task: TaskResult; onCancelled: () => void }) {
   const { setCurrentTrack, currentTrack } = useMusicStore()
   const isActive = currentTrack?.task_id === task.task_id
+  const isActive_ = task.status === 'queued' || task.status === 'processing'
 
   const handleClick = () => {
     if (task.status === 'completed') {
@@ -35,18 +67,21 @@ function TaskCard({ task }: { task: TaskResult }) {
   return (
     <div
       onClick={handleClick}
-      className={`bg-bg-card border rounded-lg p-3 transition-all animate-slide-up ${
+      className={`glass-card rounded-lg p-3 transition-all animate-slide-up ${
         task.status === 'completed'
           ? 'cursor-pointer hover:border-accent-blue/50'
           : 'cursor-default'
-      } ${isActive ? 'border-accent-blue/70' : 'border-bg-border'}`}
+      } ${isActive ? 'border-accent-blue/70' : ''}`}
     >
       {/* Header */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="text-xs font-mono text-slate-500 truncate">
           #{task.task_id.slice(0, 8)}
         </span>
-        <StatusBadge status={task.status} />
+        <div className="flex items-center gap-1.5">
+          <StatusBadge status={task.status} />
+          {isActive_ && <CancelButton taskId={task.task_id} onCancel={onCancelled} />}
+        </div>
       </div>
 
       {/* Prompt */}
@@ -54,8 +89,8 @@ function TaskCard({ task }: { task: TaskResult }) {
         {task.metadata?.prompt || 'Unknown prompt'}
       </p>
 
-      {/* Progress bar for processing */}
-      {(task.status === 'processing' || task.status === 'queued') && (
+      {/* Progress bar */}
+      {isActive_ && (
         <div className="h-1 bg-bg-tertiary rounded-full overflow-hidden mb-2">
           <div
             className="h-full bg-gradient-to-r from-accent-blue to-accent-purple transition-all duration-500"
@@ -89,20 +124,22 @@ function TaskCard({ task }: { task: TaskResult }) {
 
 export function TaskQueue() {
   const { tasks, setTasks } = useMusicStore()
+  const queryClient = useQueryClient()
 
-  // Periodically refresh task list from server
-  useQuery({
+  const { refetch } = useQuery({
     queryKey: ['tasks-list'],
     queryFn: async () => {
       const data = await api.listTasks(50, 0)
       setTasks(data.tasks)
       return data
     },
-    refetchInterval: 3000,
+    refetchInterval: 2000,
   })
 
   const activeTasks = tasks.filter((t) => t.status === 'queued' || t.status === 'processing')
-  const doneTasks = tasks.filter((t) => t.status === 'completed' || t.status === 'failed')
+  const doneTasks = tasks.filter(
+    (t) => t.status === 'completed' || t.status === 'failed' || t.status === 'cancelled',
+  )
 
   return (
     <div className="h-full flex flex-col">
@@ -125,7 +162,7 @@ export function TaskQueue() {
         {activeTasks.length > 0 && (
           <div className="space-y-2">
             {activeTasks.map((task) => (
-              <TaskCard key={task.task_id} task={task} />
+              <TaskCard key={task.task_id} task={task} onCancelled={() => refetch()} />
             ))}
           </div>
         )}
@@ -138,7 +175,7 @@ export function TaskQueue() {
               </div>
             )}
             {doneTasks.map((task) => (
-              <TaskCard key={task.task_id} task={task} />
+              <TaskCard key={task.task_id} task={task} onCancelled={() => refetch()} />
             ))}
           </div>
         )}
