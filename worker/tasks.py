@@ -161,15 +161,22 @@ def generate_music(self, task_id: str, request: dict):
                     _update_task(task_id, progress=progress)
 
                     if acestep_status == 1:
-                        # Parse result JSON string to get file path
+                        # result is a JSON-encoded string; parse twice to get list
                         try:
-                            result = json.loads(item.get("result", "{}"))
-                            remote_path = result.get("file", "")
+                            result_obj = json.loads(item.get("result", "[]"))
+                            if isinstance(result_obj, list) and result_obj:
+                                remote_path = result_obj[0].get("file", "")
+                            elif isinstance(result_obj, dict):
+                                remote_path = result_obj.get("file", "")
+                            else:
+                                remote_path = ""
                         except (ValueError, TypeError):
-                            remote_path = item.get("result", "")
+                            remote_path = ""
 
-                        # Download audio from ACE-Step
-                        audio_resp = client.get("/audio", params={"path": remote_path})
+                        # remote_path looks like "/v1/audio?path=..." — use full URL
+                        audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
+                        logger.info(f"[{task_id}] Downloading audio from {audio_url}")
+                        audio_resp = client.get(audio_url)
                         audio_resp.raise_for_status()
                         os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
                         with open(audio_path, "wb") as f:

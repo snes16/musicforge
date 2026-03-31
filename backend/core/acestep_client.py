@@ -1,5 +1,6 @@
 import httpx
 import asyncio
+import json
 import uuid
 import os
 from typing import Optional, Dict, Any
@@ -70,6 +71,12 @@ class ACEStepClient:
           {"task_id": ..., "status": 0|1|2, "audio_path": str|None}
 
         ACE-Step statuses: 0=pending, 1=success, 2=failed
+
+        Response shape:
+          {"code": 200, "data": [{"task_id": "...", "status": 1, "result": "<json-str>"}]}
+
+        result is a JSON-encoded string that itself contains a list; audio path
+        is at result_obj[0]["file"] and looks like "/v1/audio?path=...".
         """
         if self.mock_mode:
             return {"task_id": acestep_task_id, "status": 1, "audio_path": None}
@@ -79,42 +86,50 @@ class ACEStepClient:
         resp.raise_for_status()
         data = resp.json()
 
-        # data = {"data": [{"task_id": ..., "status": 0|1|2, "result": "<json str>"}]}
         items = data.get("data", [])
         if not items:
             return {"task_id": acestep_task_id, "status": 0, "audio_path": None}
 
         item = items[0]
+        status = item.get("status", 0)
+
         audio_path: Optional[str] = None
-        if item.get("status") == 1:
-            import json as _json
+        if status == 1:
+            # result is a JSON string; parse it to get the list, then grab file
             try:
-                result = _json.loads(item.get("result", "{}"))
-                audio_path = result.get("file")
+                result_obj = json.loads(item.get("result", "[]"))
+                # result_obj is a list of objects
+                if isinstance(result_obj, list) and result_obj:
+                    audio_path = result_obj[0].get("file")
+                elif isinstance(result_obj, dict):
+                    audio_path = result_obj.get("file")
             except (ValueError, TypeError):
-                audio_path = item.get("result")
+                pass
 
         return {
             "task_id": item.get("task_id", acestep_task_id),
-            "status": item.get("status", 0),
+            "status": status,
             "audio_path": audio_path,
         }
 
     async def download_audio(self, audio_path: str, dest_path: str) -> str:
-        """Copy/download audio from ACE-Step host to local dest_path.
+        """Download audio from ACE-Step running on the Windows host.
 
-        audio_path is the file path returned by query_result (absolute on the
-        ACE-Step host). We try GET /audio?path=<audio_path> first; if ACE-Step
-        serves the file directly via that route, great. Otherwise the worker
-        can map the path via a shared volume.
+        audio_path is the value of result[0]["file"], e.g. "/v1/audio?path=...".
+        ACE-Step is accessed via host.docker.internal so the path is used as-is
+        against the base URL (http://host.docker.internal:8001).
         """
         if self.mock_mode:
             _write_mock_wav(dest_path)
             return dest_path
 
-        client = await self._get_client()
-        resp = await client.get("/audio", params={"path": audio_path})
-        resp.raise_for_status()
+        # Use a one-shot client pointing at the host so we hit the full URL
+        # that ACE-Step returned (audio_path may already contain query params).
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            url = f"{self.base_url.rstrip('/')}{audio_path}"
+            resp = await client.get(url)
+            resp.raise_for_status()
+
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         with open(dest_path, "wb") as f:
             f.write(resp.content)
