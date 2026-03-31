@@ -44,11 +44,10 @@ class ACEStepClient:
         lora_name: Optional[str] = None,
         style_preset: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Submit a generation request to ACE-Step API."""
+        """Submit a generation task via POST /release_task, returns {task_id}."""
         if self.mock_mode:
-            # In mock mode, simulate ACE-Step returning a task id immediately
             task_id = str(uuid.uuid4())
-            return {"task_id": task_id, "status": "processing"}
+            return {"task_id": task_id}
 
         client = await self._get_client()
         payload: Dict[str, Any] = {
@@ -59,32 +58,62 @@ class ACEStepClient:
             payload["lyrics"] = lyrics
         if lora_name:
             payload["lora_name"] = lora_name
-        if style_preset:
-            payload["style_preset"] = style_preset
 
-        resp = await client.post("/generate", json=payload)
+        resp = await client.post("/release_task", json=payload)
         resp.raise_for_status()
-        return resp.json()
+        return resp.json()  # {"task_id": "uuid"}
 
     async def get_task_status(self, acestep_task_id: str) -> Dict[str, Any]:
-        """Poll ACE-Step for task status."""
+        """Poll via POST /query_result.
+
+        Returns normalised dict:
+          {"task_id": ..., "status": 0|1|2, "audio_path": str|None}
+
+        ACE-Step statuses: 0=pending, 1=success, 2=failed
+        """
         if self.mock_mode:
-            return {"task_id": acestep_task_id, "status": "completed", "audio_path": None}
+            return {"task_id": acestep_task_id, "status": 1, "audio_path": None}
 
         client = await self._get_client()
-        resp = await client.get(f"/tasks/{acestep_task_id}")
+        resp = await client.post("/query_result", json={"task_id_list": [acestep_task_id]})
         resp.raise_for_status()
-        return resp.json()
+        data = resp.json()
+
+        # data = {"data": [{"task_id": ..., "status": 0|1|2, "result": "<json str>"}]}
+        items = data.get("data", [])
+        if not items:
+            return {"task_id": acestep_task_id, "status": 0, "audio_path": None}
+
+        item = items[0]
+        audio_path: Optional[str] = None
+        if item.get("status") == 1:
+            import json as _json
+            try:
+                result = _json.loads(item.get("result", "{}"))
+                audio_path = result.get("file")
+            except (ValueError, TypeError):
+                audio_path = item.get("result")
+
+        return {
+            "task_id": item.get("task_id", acestep_task_id),
+            "status": item.get("status", 0),
+            "audio_path": audio_path,
+        }
 
     async def download_audio(self, audio_path: str, dest_path: str) -> str:
-        """Download generated audio from ACE-Step and save locally."""
+        """Copy/download audio from ACE-Step host to local dest_path.
+
+        audio_path is the file path returned by query_result (absolute on the
+        ACE-Step host). We try GET /audio?path=<audio_path> first; if ACE-Step
+        serves the file directly via that route, great. Otherwise the worker
+        can map the path via a shared volume.
+        """
         if self.mock_mode:
-            # Generate a simple silent WAV file as mock output
             _write_mock_wav(dest_path)
             return dest_path
 
         client = await self._get_client()
-        resp = await client.get(f"/audio/{audio_path}")
+        resp = await client.get("/audio", params={"path": audio_path})
         resp.raise_for_status()
         os.makedirs(os.path.dirname(dest_path), exist_ok=True)
         with open(dest_path, "wb") as f:

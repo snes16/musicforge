@@ -107,7 +107,7 @@ def generate_music(self, task_id: str, request: dict):
         lyrics = request.get("lyrics", "")
         duration = int(request.get("duration", 60))
         lora_name = request.get("lora_name", "")
-        style_preset = request.get("style_preset", "")
+        style_preset = request.get("style_preset", "")  # kept for backward compat, not sent to ACE-Step v1.5
 
         os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
         audio_filename = f"{task_id}.wav"
@@ -128,44 +128,55 @@ def generate_music(self, task_id: str, request: dict):
             _update_task(task_id, progress=90)
 
         else:
-            # Real ACE-Step API
+            # Real ACE-Step API (v1.5 endpoints)
             headers = {"Authorization": f"Bearer {ACESTEP_API_KEY}"}
             payload = {"prompt": prompt, "duration": duration}
             if lyrics:
                 payload["lyrics"] = lyrics
             if lora_name:
                 payload["lora_name"] = lora_name
-            if style_preset:
-                payload["style_preset"] = style_preset
 
             with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=300.0) as client:
-                resp = client.post("/generate", json=payload)
+                # 1. Submit task
+                resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
-                acestep_task = resp.json()
-                acestep_task_id = acestep_task.get("task_id")
+                acestep_task_id = resp.json().get("task_id")
+                logger.info(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
 
-                # Poll for completion
-                max_polls = 180  # 3 minutes
+                # 2. Poll via /query_result
+                # statuses: 0=pending, 1=success, 2=failed
+                max_polls = 180  # 6 minutes at 2s interval
                 for poll in range(max_polls):
                     time.sleep(2)
-                    status_resp = client.get(f"/tasks/{acestep_task_id}")
-                    status_resp.raise_for_status()
-                    status_data = status_resp.json()
-                    acestep_status = status_data.get("status", "")
+                    qr = client.post("/query_result", json={"task_id_list": [acestep_task_id]})
+                    qr.raise_for_status()
+                    items = qr.json().get("data", [])
+                    if not items:
+                        continue
+
+                    item = items[0]
+                    acestep_status = item.get("status", 0)
 
                     progress = min(90, int((poll / max_polls) * 90))
                     _update_task(task_id, progress=progress)
 
-                    if acestep_status == "completed":
-                        # Download audio
-                        audio_url = status_data.get("audio_url", f"/audio/{acestep_task_id}.wav")
-                        audio_resp = client.get(audio_url)
+                    if acestep_status == 1:
+                        # Parse result JSON string to get file path
+                        try:
+                            result = json.loads(item.get("result", "{}"))
+                            remote_path = result.get("file", "")
+                        except (ValueError, TypeError):
+                            remote_path = item.get("result", "")
+
+                        # Download audio from ACE-Step
+                        audio_resp = client.get("/audio", params={"path": remote_path})
                         audio_resp.raise_for_status()
+                        os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
                         with open(audio_path, "wb") as f:
                             f.write(audio_resp.content)
                         break
-                    elif acestep_status == "failed":
-                        raise RuntimeError(f"ACE-Step generation failed: {status_data.get('error', 'unknown')}")
+                    elif acestep_status == 2:
+                        raise RuntimeError(f"ACE-Step generation failed for task {acestep_task_id}")
                 else:
                     raise TimeoutError("ACE-Step generation timed out after 6 minutes")
 
