@@ -22,7 +22,7 @@ export function AudioPlayer({ track }: AudioPlayerProps) {
 
   if (!track) {
     return (
-      <div className="bg-bg-card border border-bg-border rounded-xl p-6 flex flex-col items-center justify-center min-h-[160px] text-center">
+      <div className="glass-card rounded-xl p-6 flex flex-col items-center justify-center min-h-[160px] text-center">
         <div className="text-4xl mb-3 opacity-30">♪</div>
         <p className="text-slate-500 text-sm">No track selected</p>
         <p className="text-slate-600 text-xs mt-1">Generate music or select a completed track</p>
@@ -43,7 +43,7 @@ export function AudioPlayer({ track }: AudioPlayerProps) {
   const downloadUrl = audioUrl
 
   return (
-    <div className="bg-bg-card border border-bg-border rounded-xl p-4 space-y-3">
+    <div className="glass-card rounded-xl p-4 space-y-3">
       {/* Track info */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">

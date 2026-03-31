@@ -131,7 +131,7 @@ export default function App() {
             <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-6">
               {/* Left column */}
               <div className="space-y-5">
-                <section className="bg-bg-secondary border border-bg-border rounded-xl p-5">
+                <section className="glass-panel rounded-xl p-5">
                   <h2 className="text-xs font-mono text-slate-400 uppercase tracking-wider mb-4">
                     Generate
                   </h2>
@@ -147,13 +147,13 @@ export default function App() {
               </div>
 
               {/* Right column — Task Queue */}
-              <aside className="bg-bg-secondary border border-bg-border rounded-xl p-5 xl:min-h-[600px]">
+              <aside className="glass-panel rounded-xl p-5 xl:min-h-[600px]">
                 <TaskQueue />
               </aside>
             </div>
 
             {/* GPU Dashboard */}
-            <section className="bg-bg-secondary border border-bg-border rounded-xl p-5">
+            <section className="glass-panel rounded-xl p-5">
               <GPUDashboard />
             </section>
           </div>

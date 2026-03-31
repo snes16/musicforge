@@ -18,7 +18,7 @@ function GPUCard({ worker }: { worker: WorkerInfo }) {
     'from-accent-blue to-accent-purple'
 
   return (
-    <div className="bg-bg-card border border-bg-border rounded-xl p-4 min-w-[200px] flex-1">
+    <div className="glass-card rounded-xl p-4 min-w-[200px] flex-1">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -94,7 +94,7 @@ export function GPUDashboard() {
       {isLoading && workers.length === 0 ? (
         <div className="flex gap-3">
           {[0].map((i) => (
-            <div key={i} className="bg-bg-card border border-bg-border rounded-xl p-4 flex-1 animate-pulse">
+            <div key={i} className="glass-card rounded-xl p-4 flex-1 animate-pulse">
               <div className="h-3 bg-bg-tertiary rounded mb-3 w-2/3" />
               <div className="h-4 bg-bg-tertiary rounded mb-3" />
               <div className="h-1.5 bg-bg-tertiary rounded" />
@@ -102,7 +102,7 @@ export function GPUDashboard() {
           ))}
         </div>
       ) : workers.length === 0 ? (
-        <div className="bg-bg-card border border-bg-border rounded-xl p-4 text-center text-sm text-slate-500">
+        <div className="glass-card rounded-xl p-4 text-center text-sm text-slate-500">
           No GPU workers detected. Set <span className="font-mono text-accent-blue">MOCK_GPU=true</span> for development.
         </div>
       ) : (
