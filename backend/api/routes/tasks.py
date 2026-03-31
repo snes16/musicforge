@@ -6,16 +6,14 @@ router = APIRouter()
 
 
 def _task_dict_to_model(task: dict) -> TaskResult:
-    metadata = None
-    if task.get("status") == "completed":
-        metadata = TaskMetadata(
-            model="acestep-v15-turbo",
-            lora=task.get("lora_name") or None,
-            generation_time=float(task["generation_time"]) if task.get("generation_time") else None,
-            gpu=task.get("gpu") or None,
-            prompt=task.get("prompt"),
-            duration=int(task["duration"]) if task.get("duration") else None,
-        )
+    metadata = TaskMetadata(
+        model="acestep-v15-turbo",
+        lora=task.get("lora_name") or None,
+        generation_time=float(task["generation_time"]) if task.get("generation_time") else None,
+        gpu=task.get("gpu") or None,
+        prompt=task.get("prompt"),
+        duration=int(task["duration"]) if task.get("duration") else None,
+    )
     return TaskResult(
         task_id=task["task_id"],
         status=TaskStatusEnum(task["status"]),

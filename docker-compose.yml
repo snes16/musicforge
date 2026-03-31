@@ -66,12 +66,14 @@ services:
     volumes:
       - ./audio_output:/app/audio_output
     environment:
-      - ACESTEP_API_URL=${ACESTEP_API_URL:-http://acestep:8001}
+      - ACESTEP_API_URL=${ACESTEP_API_URL:-http://host.docker.internal:8001}
       - ACESTEP_API_KEY=${ACESTEP_API_KEY:-local-dev-key}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - AUDIO_OUTPUT_DIR=/app/audio_output
       - MOCK_GPU=${MOCK_GPU:-true}
-      - MOCK_ACESTEP=${MOCK_ACESTEP:-true}
+      - MOCK_ACESTEP=${MOCK_ACESTEP:-false}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy

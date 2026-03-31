@@ -59,16 +59,15 @@ async def get_generation_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-    metadata = None
-    if task.get("status") == "completed":
-        metadata = TaskMetadata(
-            model="acestep-v15-turbo",
-            lora=task.get("lora_name") or None,
-            generation_time=float(task["generation_time"]) if task.get("generation_time") else None,
-            gpu=task.get("gpu") or None,
-            prompt=task.get("prompt"),
-            duration=int(task["duration"]) if task.get("duration") else None,
-        )
+    # Always return metadata so the UI can show prompt/duration while processing
+    metadata = TaskMetadata(
+        model="acestep-v15-turbo",
+        lora=task.get("lora_name") or None,
+        generation_time=float(task["generation_time"]) if task.get("generation_time") else None,
+        gpu=task.get("gpu") or None,
+        prompt=task.get("prompt"),
+        duration=int(task["duration"]) if task.get("duration") else None,
+    )
 
     return TaskResult(
         task_id=task["task_id"],
