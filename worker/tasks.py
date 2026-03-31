@@ -181,15 +181,15 @@ def generate_music(self, task_id: str, request: dict):
                     )
                     qr.raise_for_status()
                     raw_response = qr.json()
-                    if poll % 10 == 1:  # log every ~10s to avoid spam
-                        logger.info(f"[{task_id}] query_result (poll={poll}): {raw_response}")
                     items = raw_response.get("data", [])
                     if not items:
+                        logger.info(f"[{task_id}] poll={poll} empty data: {raw_response}")
                         continue
 
                     item = items[0]
                     acestep_status = item.get("status", 0)
-                    logger.debug(f"[{task_id}] poll={poll} ACE-Step status={acestep_status}")
+                    # Log every poll so we can see exactly what changes
+                    logger.info(f"[{task_id}] poll={poll} status={acestep_status!r} result_preview={str(item.get('result',''))[:120]}")
 
                     # Asymptotic progress: approaches 98, never reaches it.
                     # half_life = duration/4 so the bar hits ~75% around the expected
@@ -205,16 +205,24 @@ def generate_music(self, task_id: str, request: dict):
                             raise _TaskCancelled()
 
                         # result is a JSON-encoded string → list of objects
+                        raw_result = item.get("result", "")
+                        logger.info(f"[{task_id}] status=1 raw result: {raw_result}")
                         try:
-                            result_obj = json.loads(item.get("result", "[]"))
+                            result_obj = json.loads(raw_result)
+                            logger.info(f"[{task_id}] parsed result_obj type={type(result_obj).__name__}: {result_obj}")
                             if isinstance(result_obj, list) and result_obj:
                                 remote_path = result_obj[0].get("file", "")
                             elif isinstance(result_obj, dict):
                                 remote_path = result_obj.get("file", "")
                             else:
                                 remote_path = ""
-                        except (ValueError, TypeError):
+                        except (ValueError, TypeError) as e:
+                            logger.error(f"[{task_id}] failed to parse result: {e!r}, raw={raw_result!r}")
                             remote_path = ""
+
+                        logger.info(f"[{task_id}] remote_path={remote_path!r}")
+                        if not remote_path:
+                            raise RuntimeError(f"ACE-Step status=1 but could not extract file path. raw_result={raw_result!r}")
 
                         audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
                         logger.info(f"[{task_id}] Downloading audio from {audio_url}")
