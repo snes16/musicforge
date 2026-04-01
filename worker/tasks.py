@@ -158,13 +158,44 @@ def generate_music(self, task_id: str, request: dict):
                 # 1. Submit — long timeout because ACE-Step may be loading model
                 resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
-                acestep_task_id = resp.json().get("task_id")
+                release_data = resp.json()
+                logger.warning(f"[{task_id}] /release_task FULL response: {release_data}")
+                acestep_task_id = release_data.get("task_id")
                 logger.info(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
 
+                # Check if response already contains audio result (synchronous API)
+                release_result = release_data.get("result") or release_data.get("audio_url") or release_data.get("output")
+                release_status = release_data.get("status")
+                logger.warning(f"[{task_id}] /release_task status={release_status!r} result={str(release_result)[:300]}")
+
+                # If release_task returned result directly, skip polling
+                if release_result and release_status not in (0, "queued", "pending", None):
+                    logger.warning(f"[{task_id}] Result available in /release_task response, skipping poll")
+                    if isinstance(release_result, list) and release_result:
+                        remote_path = release_result[0].get("file", "") if isinstance(release_result[0], dict) else ""
+                    elif isinstance(release_result, dict):
+                        remote_path = release_result.get("file", "")
+                    elif isinstance(release_result, str) and release_result.startswith("/"):
+                        remote_path = release_result
+                    else:
+                        remote_path = ""
+                    if remote_path:
+                        audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
+                        logger.info(f"[{task_id}] Downloading directly: {audio_url}")
+                        audio_resp = client.get(audio_url, timeout=120.0)
+                        audio_resp.raise_for_status()
+                        with open(audio_path, "wb") as f:
+                            f.write(audio_resp.content)
+                        # Skip the polling while-loop
+                        acestep_task_id = None
+
                 # 2. Poll — statuses: 0=pending, 1=success, 2=failed
+                # Skip poll if we already got the result from /release_task directly
+                if acestep_task_id is None:
+                    logger.info(f"[{task_id}] Skipping poll (result already obtained)")
                 deadline = start_time + MAX_POLL_TIME
                 poll = 0
-                while time.time() < deadline:
+                while acestep_task_id is not None and time.time() < deadline:
                     # Check cancel before AND after sleep so we react within ~1s
                     if _is_cancelled(task_id, r):
                         raise _TaskCancelled()
@@ -188,8 +219,9 @@ def generate_music(self, task_id: str, request: dict):
 
                     item = items[0]
                     acestep_status = item.get("status", 0)
-                    # Log every poll — need to see the raw value to debug
-                    logger.warning(f"[POLL] poll={poll} status={acestep_status!r} type={type(acestep_status).__name__} keys={list(item.keys())} result_preview={str(item.get('result',''))[:200]}")
+                    raw_result_preview = str(item.get("result", ""))[:300]
+                    # Log FULL item on every poll so we can see exact API response shape
+                    logger.warning(f"[POLL] poll={poll} status={acestep_status!r} type={type(acestep_status).__name__} keys={list(item.keys())} result_preview={raw_result_preview}")
 
                     # Asymptotic progress: approaches 98, never reaches it.
                     elapsed = time.time() - start_time
@@ -198,7 +230,13 @@ def generate_music(self, task_id: str, request: dict):
                     _update_task(task_id, r=r, progress=progress)
 
                     # Accept status 1 (int) or "1" / "success" / "completed" (str)
-                    is_success = acestep_status == 1 or str(acestep_status) in ("1", "success", "completed", "done")
+                    is_success = acestep_status == 1 or str(acestep_status) in ("1", "success", "completed", "done", "succeeded", "finish", "finished")
+                    # Fallback: if result is non-empty and status isn't explicitly failed,
+                    # treat as success — handles APIs that return result before updating status
+                    raw_result = item.get("result", "")
+                    if not is_success and raw_result and raw_result not in ("null", "[]", "{}", ""):
+                        logger.warning(f"[POLL] poll={poll} status={acestep_status!r} not matched but result non-empty — treating as success")
+                        is_success = True
                     is_failed  = acestep_status == 2 or str(acestep_status) in ("2", "failed", "error")
 
                     if is_success:
@@ -207,8 +245,7 @@ def generate_music(self, task_id: str, request: dict):
                             raise _TaskCancelled()
 
                         # result is a JSON-encoded string → list of objects
-                        raw_result = item.get("result", "")
-                        logger.info(f"[{task_id}] status=1 raw result: {raw_result}")
+                        logger.info(f"[{task_id}] success detected, raw result: {raw_result}")
                         try:
                             result_obj = json.loads(raw_result)
                             logger.info(f"[{task_id}] parsed result_obj type={type(result_obj).__name__}: {result_obj}")
