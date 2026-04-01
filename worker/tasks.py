@@ -193,10 +193,20 @@ def generate_music(self, task_id: str, request: dict):
                         continue
 
                     item = items[0]
-                    acestep_status = item.get("status", 0)
-                    raw_result_preview = str(item.get("result", ""))[:300]
-                    # Log FULL item on every poll so we can see exact API response shape
-                    logger.warning(f"[POLL] poll={poll} status={acestep_status!r} type={type(acestep_status).__name__} keys={list(item.keys())} result_preview={raw_result_preview}")
+                    # result is a JSON-encoded string: '[{"file": "...", "stage": "queued"|"processing"|"completed", ...}]'
+                    raw_result = item.get("result", "")
+                    try:
+                        inner = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+                        inner_item = inner[0] if isinstance(inner, list) and inner else {}
+                    except (ValueError, TypeError):
+                        inner_item = {}
+
+                    inner_stage = inner_item.get("stage", "")
+                    inner_file  = inner_item.get("file", "")
+                    inner_progress = inner_item.get("progress", 0.0)
+
+                    if poll % 10 == 1:  # log every 10 polls to reduce noise
+                        logger.warning(f"[POLL] poll={poll} stage={inner_stage!r} file={inner_file!r} progress={inner_progress}")
 
                     # Asymptotic progress: approaches 98, never reaches it.
                     elapsed = time.time() - start_time
@@ -204,47 +214,16 @@ def generate_music(self, task_id: str, request: dict):
                     progress = int(98 * (1 - 0.5 ** (elapsed / half_life)))
                     _update_task(task_id, r=r, progress=progress)
 
-                    # Accept status 1 (int) or "1" / "success" / "completed" (str)
-                    is_success = acestep_status == 1 or str(acestep_status) in ("1", "success", "completed", "done", "succeeded", "finish", "finished")
-                    # Fallback: if result is non-empty list/dict and status isn't explicitly failed,
-                    # treat as success — handles APIs that return result before updating status field
-                    raw_result = item.get("result", "")
-                    result_is_nonempty = (
-                        (isinstance(raw_result, list) and len(raw_result) > 0) or
-                        (isinstance(raw_result, dict) and raw_result) or
-                        (isinstance(raw_result, str) and raw_result not in ("", "null", "[]", "{}"))
-                    )
-                    if not is_success and result_is_nonempty:
-                        logger.warning(f"[POLL] poll={poll} status={acestep_status!r} result non-empty — treating as success. result={raw_result}")
-                        is_success = True
-                    is_failed  = acestep_status == 2 or str(acestep_status) in ("2", "failed", "error")
+                    is_success = inner_stage in ("completed", "success", "done") or bool(inner_file)
+                    is_failed  = inner_stage in ("failed", "error") or inner_item.get("error")
 
                     if is_success:
                         # One last cancel check before we commit to "completed"
                         if _is_cancelled(task_id, r):
                             raise _TaskCancelled()
 
-                        # result may be: list of dicts, dict, or JSON-encoded string
-                        logger.warning(f"[{task_id}] success! raw_result type={type(raw_result).__name__} value={raw_result}")
-                        try:
-                            if isinstance(raw_result, list) and raw_result:
-                                result_obj = raw_result
-                            elif isinstance(raw_result, dict):
-                                result_obj = raw_result
-                            elif isinstance(raw_result, str) and raw_result:
-                                result_obj = json.loads(raw_result)
-                            else:
-                                result_obj = None
-
-                            if isinstance(result_obj, list) and result_obj:
-                                remote_path = result_obj[0].get("file", "") if isinstance(result_obj[0], dict) else ""
-                            elif isinstance(result_obj, dict):
-                                remote_path = result_obj.get("file", "")
-                            else:
-                                remote_path = ""
-                        except (ValueError, TypeError) as e:
-                            logger.error(f"[{task_id}] failed to parse result: {e!r}, raw={raw_result!r}")
-                            remote_path = ""
+                        remote_path = inner_file
+                        logger.warning(f"[{task_id}] success! stage={inner_stage!r} file={remote_path!r}")
 
                         logger.info(f"[{task_id}] remote_path={remote_path!r}")
                         if not remote_path:
