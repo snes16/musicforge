@@ -126,7 +126,7 @@ def generate_music(self, task_id: str, request: dict):
         lora_name = request.get("lora_name", "")
 
         os.makedirs(AUDIO_OUTPUT_DIR, exist_ok=True)
-        audio_filename = f"{task_id}.wav"
+        audio_filename = f"{task_id}.mp3"
         audio_path = os.path.join(AUDIO_OUTPUT_DIR, audio_filename)
 
         if MOCK_ACESTEP:
@@ -155,23 +155,36 @@ def generate_music(self, task_id: str, request: dict):
                 payload["lora_name"] = lora_name
 
             with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=300.0) as client:
-                # 1. Submit — response structure: {"data": {"task_id": "...", "status": "queued"}, "code": 200}
+                # 1. Submit — response: {"data": {"task_id": "...", "status": "queued"}, "code": 200}
                 resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
                 release_data = resp.json()
-                logger.warning(f"[{task_id}] /release_task response: {release_data}")
-                # task_id is nested under "data"
                 data_obj = release_data.get("data") or release_data
                 acestep_task_id = data_obj.get("task_id") or release_data.get("task_id")
                 logger.warning(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
                 if not acestep_task_id:
                     raise RuntimeError(f"No task_id in /release_task response: {release_data}")
 
-                # 2. Poll — statuses: 0=pending, 1=success, 2=failed
+                # 2. Watch for new files in mounted ACE-Step cache dir.
+                # /query_result always returns stage=queued (ACE-Step bug), so we
+                # detect completion by watching the filesystem instead.
+                cache_dir = os.environ.get("ACESTEP_CACHE_DIR", "")
+                submit_time = time.time()
+
+                # Snapshot existing files before we start waiting
+                def _list_cache(d):
+                    if not d or not os.path.isdir(d):
+                        return set()
+                    return {f for f in os.listdir(d) if f.endswith((".mp3", ".wav"))}
+
+                files_before = _list_cache(cache_dir)
+                logger.info(f"[{task_id}] cache_dir={cache_dir!r} files_before={len(files_before)}")
+
                 deadline = start_time + MAX_POLL_TIME
                 poll = 0
+                found_file = None
+
                 while time.time() < deadline:
-                    # Check cancel before AND after sleep so we react within ~1s
                     if _is_cancelled(task_id, r):
                         raise _TaskCancelled()
 
@@ -181,70 +194,66 @@ def generate_music(self, task_id: str, request: dict):
                     if _is_cancelled(task_id, r):
                         raise _TaskCancelled()
 
-                    qr = client.post(
-                        "/query_result",
-                        json={"task_id_list": [acestep_task_id]},
-                    )
-                    qr.raise_for_status()
-                    raw_response = qr.json()
-                    items = raw_response.get("data", [])
-                    if not items:
-                        logger.info(f"[{task_id}] poll={poll} empty data: {raw_response}")
-                        continue
-
-                    item = items[0]
-                    # result is a JSON-encoded string: '[{"file": "...", "stage": "queued"|"processing"|"completed", ...}]'
-                    raw_result = item.get("result", "")
-                    try:
-                        inner = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
-                        inner_item = inner[0] if isinstance(inner, list) and inner else {}
-                    except (ValueError, TypeError):
-                        inner_item = {}
-
-                    inner_stage = inner_item.get("stage", "")
-                    inner_file  = inner_item.get("file", "")
-                    inner_progress = inner_item.get("progress", 0.0)
-
-                    if poll % 10 == 1:  # log every 10 polls to reduce noise
-                        logger.warning(f"[POLL] poll={poll} stage={inner_stage!r} file={inner_file!r} progress={inner_progress}")
-
-                    # Asymptotic progress: approaches 98, never reaches it.
+                    # Asymptotic progress
                     elapsed = time.time() - start_time
                     half_life = max(duration / 4, 10)
                     progress = int(98 * (1 - 0.5 ** (elapsed / half_life)))
                     _update_task(task_id, r=r, progress=progress)
 
-                    is_success = inner_stage in ("completed", "success", "done") or bool(inner_file)
-                    is_failed  = inner_stage in ("failed", "error") or inner_item.get("error")
-
-                    if is_success:
-                        # One last cancel check before we commit to "completed"
-                        if _is_cancelled(task_id, r):
-                            raise _TaskCancelled()
-
-                        remote_path = inner_file
-                        logger.warning(f"[{task_id}] success! stage={inner_stage!r} file={remote_path!r}")
-
-                        logger.info(f"[{task_id}] remote_path={remote_path!r}")
-                        if not remote_path:
-                            raise RuntimeError(f"ACE-Step status=1 but could not extract file path. raw_result={raw_result!r}")
-
-                        audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
-                        logger.info(f"[{task_id}] Downloading audio from {audio_url}")
-                        audio_resp = client.get(audio_url, timeout=120.0)
-                        audio_resp.raise_for_status()
-                        with open(audio_path, "wb") as f:
-                            f.write(audio_resp.content)
-                        break
-
-                    elif is_failed:
-                        raise RuntimeError(
-                            f"ACE-Step generation failed for task {acestep_task_id}"
-                        )
+                    # Check filesystem for new files
+                    if cache_dir and os.path.isdir(cache_dir):
+                        files_now = _list_cache(cache_dir)
+                        new_files = files_now - files_before
+                        if new_files:
+                            # Pick newest file among new ones
+                            newest = max(
+                                new_files,
+                                key=lambda f: os.path.getmtime(os.path.join(cache_dir, f))
+                            )
+                            found_file = os.path.join(cache_dir, newest)
+                            logger.warning(f"[{task_id}] New file detected: {found_file}")
+                            break
+                    elif poll % 30 == 1:
+                        logger.warning(f"[{task_id}] poll={poll} cache_dir not mounted, falling back to /query_result")
+                        # Fallback: try /query_result
+                        try:
+                            qr = client.post("/query_result", json={"task_id_list": [acestep_task_id]})
+                            qr.raise_for_status()
+                            items = (qr.json().get("data") or [])
+                            if items:
+                                item = items[0]
+                                raw_result = item.get("result", "")
+                                inner = json.loads(raw_result) if isinstance(raw_result, str) else raw_result
+                                inner_item = (inner[0] if isinstance(inner, list) and inner else {}) if inner else {}
+                                inner_file = inner_item.get("file", "")
+                                inner_stage = inner_item.get("stage", "")
+                                logger.warning(f"[{task_id}] fallback poll={poll} stage={inner_stage!r} file={inner_file!r}")
+                                if inner_stage in ("completed", "success", "done") or inner_file:
+                                    found_file = inner_file  # URL path, handled below
+                                    break
+                        except Exception as e:
+                            logger.warning(f"[{task_id}] /query_result error: {e}")
                 else:
-                    raise TimeoutError(
-                        f"ACE-Step timed out after {MAX_POLL_TIME // 60} minutes"
-                    )
+                    raise TimeoutError(f"ACE-Step timed out after {MAX_POLL_TIME // 60} minutes")
+
+                if _is_cancelled(task_id, r):
+                    raise _TaskCancelled()
+
+                if not found_file:
+                    raise RuntimeError("Generation finished but no output file found")
+
+                # Copy file to audio_output (or download if it's a URL path)
+                if os.path.isfile(str(found_file)):
+                    import shutil
+                    shutil.copy2(found_file, audio_path)
+                    logger.info(f"[{task_id}] Copied {found_file} → {audio_path}")
+                else:
+                    audio_url = f"{ACESTEP_API_URL.rstrip('/')}{found_file}"
+                    logger.info(f"[{task_id}] Downloading {audio_url}")
+                    audio_resp = client.get(audio_url, timeout=120.0)
+                    audio_resp.raise_for_status()
+                    with open(audio_path, "wb") as f:
+                        f.write(audio_resp.content)
 
         generation_time = round(time.time() - start_time, 2)
 
