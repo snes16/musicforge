@@ -155,47 +155,22 @@ def generate_music(self, task_id: str, request: dict):
                 payload["lora_name"] = lora_name
 
             with httpx.Client(base_url=ACESTEP_API_URL, headers=headers, timeout=300.0) as client:
-                # 1. Submit — long timeout because ACE-Step may be loading model
+                # 1. Submit — response structure: {"data": {"task_id": "...", "status": "queued"}, "code": 200}
                 resp = client.post("/release_task", json=payload)
                 resp.raise_for_status()
                 release_data = resp.json()
-                logger.warning(f"[{task_id}] /release_task FULL response: {release_data}")
-                acestep_task_id = release_data.get("task_id")
-                logger.info(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
-
-                # Check if response already contains audio result (synchronous API)
-                release_result = release_data.get("result") or release_data.get("audio_url") or release_data.get("output")
-                release_status = release_data.get("status")
-                logger.warning(f"[{task_id}] /release_task status={release_status!r} result={str(release_result)[:300]}")
-
-                # If release_task returned result directly, skip polling
-                if release_result and release_status not in (0, "queued", "pending", None):
-                    logger.warning(f"[{task_id}] Result available in /release_task response, skipping poll")
-                    if isinstance(release_result, list) and release_result:
-                        remote_path = release_result[0].get("file", "") if isinstance(release_result[0], dict) else ""
-                    elif isinstance(release_result, dict):
-                        remote_path = release_result.get("file", "")
-                    elif isinstance(release_result, str) and release_result.startswith("/"):
-                        remote_path = release_result
-                    else:
-                        remote_path = ""
-                    if remote_path:
-                        audio_url = f"{ACESTEP_API_URL.rstrip('/')}{remote_path}"
-                        logger.info(f"[{task_id}] Downloading directly: {audio_url}")
-                        audio_resp = client.get(audio_url, timeout=120.0)
-                        audio_resp.raise_for_status()
-                        with open(audio_path, "wb") as f:
-                            f.write(audio_resp.content)
-                        # Skip the polling while-loop
-                        acestep_task_id = None
+                logger.warning(f"[{task_id}] /release_task response: {release_data}")
+                # task_id is nested under "data"
+                data_obj = release_data.get("data") or release_data
+                acestep_task_id = data_obj.get("task_id") or release_data.get("task_id")
+                logger.warning(f"[{task_id}] ACE-Step task_id: {acestep_task_id}")
+                if not acestep_task_id:
+                    raise RuntimeError(f"No task_id in /release_task response: {release_data}")
 
                 # 2. Poll — statuses: 0=pending, 1=success, 2=failed
-                # Skip poll if we already got the result from /release_task directly
-                if acestep_task_id is None:
-                    logger.info(f"[{task_id}] Skipping poll (result already obtained)")
                 deadline = start_time + MAX_POLL_TIME
                 poll = 0
-                while acestep_task_id is not None and time.time() < deadline:
+                while time.time() < deadline:
                     # Check cancel before AND after sleep so we react within ~1s
                     if _is_cancelled(task_id, r):
                         raise _TaskCancelled()
@@ -231,11 +206,16 @@ def generate_music(self, task_id: str, request: dict):
 
                     # Accept status 1 (int) or "1" / "success" / "completed" (str)
                     is_success = acestep_status == 1 or str(acestep_status) in ("1", "success", "completed", "done", "succeeded", "finish", "finished")
-                    # Fallback: if result is non-empty and status isn't explicitly failed,
-                    # treat as success — handles APIs that return result before updating status
+                    # Fallback: if result is non-empty list/dict and status isn't explicitly failed,
+                    # treat as success — handles APIs that return result before updating status field
                     raw_result = item.get("result", "")
-                    if not is_success and raw_result and raw_result not in ("null", "[]", "{}", ""):
-                        logger.warning(f"[POLL] poll={poll} status={acestep_status!r} not matched but result non-empty — treating as success")
+                    result_is_nonempty = (
+                        (isinstance(raw_result, list) and len(raw_result) > 0) or
+                        (isinstance(raw_result, dict) and raw_result) or
+                        (isinstance(raw_result, str) and raw_result not in ("", "null", "[]", "{}"))
+                    )
+                    if not is_success and result_is_nonempty:
+                        logger.warning(f"[POLL] poll={poll} status={acestep_status!r} result non-empty — treating as success. result={raw_result}")
                         is_success = True
                     is_failed  = acestep_status == 2 or str(acestep_status) in ("2", "failed", "error")
 
@@ -244,13 +224,20 @@ def generate_music(self, task_id: str, request: dict):
                         if _is_cancelled(task_id, r):
                             raise _TaskCancelled()
 
-                        # result is a JSON-encoded string → list of objects
-                        logger.info(f"[{task_id}] success detected, raw result: {raw_result}")
+                        # result may be: list of dicts, dict, or JSON-encoded string
+                        logger.warning(f"[{task_id}] success! raw_result type={type(raw_result).__name__} value={raw_result}")
                         try:
-                            result_obj = json.loads(raw_result)
-                            logger.info(f"[{task_id}] parsed result_obj type={type(result_obj).__name__}: {result_obj}")
+                            if isinstance(raw_result, list) and raw_result:
+                                result_obj = raw_result
+                            elif isinstance(raw_result, dict):
+                                result_obj = raw_result
+                            elif isinstance(raw_result, str) and raw_result:
+                                result_obj = json.loads(raw_result)
+                            else:
+                                result_obj = None
+
                             if isinstance(result_obj, list) and result_obj:
-                                remote_path = result_obj[0].get("file", "")
+                                remote_path = result_obj[0].get("file", "") if isinstance(result_obj[0], dict) else ""
                             elif isinstance(result_obj, dict):
                                 remote_path = result_obj.get("file", "")
                             else:
