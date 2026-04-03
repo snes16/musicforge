@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+﻿import React, { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type GenerateRequest } from '../../api/client'
 import { useGenerate } from '../../hooks/useGenerate'
@@ -11,11 +11,12 @@ export function GenerateForm() {
   const isGenerating = useMusicStore((s) => s.isGenerating)
 
   const [prompt, setPrompt] = useState('')
-  const [lyrics, setLyrics] = useState('')
+  const [lyrics, setLyrics] = useState(
+    '[verse]\\nFirst verse line\\nSecond verse line\\n\\n[chorus]\\nMain hook line\\nRepeatable chorus line',
+  )
   const [duration, setDuration] = useState(60)
   const [loraName, setLoraName] = useState('')
   const [stylePreset, setStylePreset] = useState('')
-  const [showLyrics, setShowLyrics] = useState(false)
 
   const { data: modelsData } = useQuery({
     queryKey: ['models'],
@@ -25,13 +26,13 @@ export function GenerateForm() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!prompt.trim()) return
+    if (!prompt.trim() || !lyrics.trim()) return
 
     const req: GenerateRequest = {
       prompt: prompt.trim(),
+      lyrics: lyrics.trim(),
       duration,
     }
-    if (lyrics.trim()) req.lyrics = lyrics.trim()
     if (loraName) req.lora_name = loraName
     if (stylePreset) req.style_preset = stylePreset
 
@@ -39,11 +40,36 @@ export function GenerateForm() {
   }
 
   const handlePresetSelect = (presetId: string) => {
-    setStylePreset(presetId)
-    const preset = modelsData?.style_presets.find((p) => p.id === presetId)
-    if (preset && !prompt) {
-      setPrompt(preset.prompt_hint)
+    const presets = modelsData?.style_presets ?? []
+
+    const stripLeadingPresetHint = (value: string): string => {
+      let stripped = value.trim()
+      for (const item of presets) {
+        const hint = item.prompt_hint.trim()
+        if (!hint) continue
+        const withComma = `${hint}, `
+        if (stripped.toLowerCase().startsWith(withComma.toLowerCase())) {
+          stripped = stripped.slice(withComma.length).trim()
+          break
+        }
+        if (stripped.toLowerCase() === hint.toLowerCase()) {
+          stripped = ''
+          break
+        }
+      }
+      return stripped
     }
+
+    setStylePreset(presetId)
+    setPrompt((current) => {
+      const basePrompt = stripLeadingPresetHint(current)
+      if (!presetId) return basePrompt
+
+      const selected = presets.find((p) => p.id === presetId)
+      if (!selected) return current
+
+      return basePrompt ? `${selected.prompt_hint}, ${basePrompt}` : selected.prompt_hint
+    })
   }
 
   const formatDuration = (secs: number) => {
@@ -53,6 +79,8 @@ export function GenerateForm() {
   }
 
   const busy = isLoading || isGenerating
+  const hasLyricsSections =
+    lyrics.toLowerCase().includes('[verse]') && lyrics.toLowerCase().includes('[chorus]')
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -141,37 +169,34 @@ export function GenerateForm() {
         </select>
       </div>
 
-      {/* Optional Lyrics Toggle */}
+      {/* Lyrics (required) */}
       <div>
-        <button
-          type="button"
-          onClick={() => setShowLyrics(!showLyrics)}
-          className="text-xs font-mono text-slate-400 hover:text-accent-blue transition-colors flex items-center gap-1.5"
-        >
-          <span className={`transition-transform ${showLyrics ? 'rotate-90' : ''}`}>▶</span>
-          {showLyrics ? 'Hide Lyrics' : 'Add Custom Lyrics (optional)'}
-        </button>
-        {showLyrics && (
-          <div className="mt-2 animate-fade-in">
-            <textarea
-              value={lyrics}
-              onChange={(e) => setLyrics(e.target.value)}
-              placeholder={`[verse]\nYour verse lyrics here\n\n[chorus]\nChorus text`}
-              rows={6}
-              maxLength={5000}
-              className="w-full bg-bg-secondary border border-bg-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 resize-none font-mono focus:border-accent-purple transition-colors"
-            />
-            <div className="text-right text-xs text-slate-600 mt-1">{lyrics.length}/5000</div>
-          </div>
-        )}
+        <label className="block text-xs font-mono text-slate-400 mb-1.5 uppercase tracking-wider">
+          Lyrics (Required)
+        </label>
+        <textarea
+          value={lyrics}
+          onChange={(e) => setLyrics(e.target.value)}
+          placeholder={`[verse]\nYour verse lyrics here\n\n[chorus]\nChorus text`}
+          rows={8}
+          maxLength={5000}
+          required
+          className="w-full bg-bg-secondary border border-bg-border rounded-lg px-3 py-2.5 text-sm text-slate-200 placeholder-slate-600 resize-none font-mono focus:border-accent-purple transition-colors"
+        />
+        <div className="mt-1 flex items-center justify-between text-xs font-mono">
+          <span className={hasLyricsSections ? 'text-status-completed' : 'text-status-failed'}>
+            Must contain [verse] and [chorus]
+          </span>
+          <span className="text-slate-600">{lyrics.length}/5000</span>
+        </div>
       </div>
 
       {/* Submit */}
       <button
         type="submit"
-        disabled={busy || !prompt.trim()}
+        disabled={busy || !prompt.trim() || !lyrics.trim() || !hasLyricsSections}
         className={`w-full py-3 rounded-lg font-semibold text-sm transition-all ${
-          busy || !prompt.trim()
+          busy || !prompt.trim() || !lyrics.trim() || !hasLyricsSections
             ? 'bg-bg-border text-slate-500 cursor-not-allowed'
             : 'bg-gradient-to-r from-accent-blue to-accent-purple text-white hover:opacity-90 active:scale-[0.99]'
         }`}

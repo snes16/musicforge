@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional
 from enum import Enum
 
@@ -12,10 +12,25 @@ class TaskStatus(str, Enum):
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=1000, description="Music style description")
-    lyrics: Optional[str] = Field(None, max_length=5000, description="Optional song lyrics")
+    lyrics: str = Field(
+        ...,
+        min_length=20,
+        max_length=5000,
+        description="Song lyrics with at least [verse] and [chorus] sections",
+    )
     duration: int = Field(60, ge=30, le=300, description="Duration in seconds")
     lora_name: Optional[str] = Field(None, description="LoRA adapter name, null = base model")
     style_preset: Optional[str] = Field(None, description="Style preset name")
+
+    @field_validator("lyrics")
+    @classmethod
+    def validate_lyrics_structure(cls, value: str) -> str:
+        text = value.lower()
+        if "[verse]" not in text:
+            raise ValueError("lyrics must include a [verse] section")
+        if "[chorus]" not in text:
+            raise ValueError("lyrics must include a [chorus] section")
+        return value.strip()
 
     model_config = {
         "json_schema_extra": {

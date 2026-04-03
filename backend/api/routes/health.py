@@ -60,6 +60,7 @@ async def get_metrics():
 
 
 @router.get("/workers")
+@router.get("/api/workers")
 async def get_workers():
     """Get current GPU worker status."""
     workers = gpu_manager.get_all_stats()

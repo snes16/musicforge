@@ -44,6 +44,10 @@ function MoonIcon() {
 }
 
 function Header({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => void }) {
+  const apiDocsUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/docs`
+  const flowerUrl = import.meta.env.VITE_FLOWER_URL || 'http://localhost:5555'
+  const acestepUrl = import.meta.env.VITE_ACESTEP_URL || 'http://localhost:8001'
+
   return (
     <header className="border-b border-bg-border bg-bg-secondary/80 backdrop-blur-sm sticky top-0 z-10">
       <div className="max-w-screen-2xl mx-auto px-6 py-3 flex items-center justify-between">
@@ -58,7 +62,7 @@ function Header({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => 
         </div>
         <div className="flex items-center gap-4 text-xs font-mono text-slate-500">
           <a
-            href="http://localhost:8000/docs"
+            href={apiDocsUrl}
             target="_blank"
             rel="noreferrer"
             className="hover:text-accent-blue transition-colors"
@@ -66,7 +70,7 @@ function Header({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => 
             API Docs
           </a>
           <a
-            href="http://localhost:5555"
+            href={flowerUrl}
             target="_blank"
             rel="noreferrer"
             className="hover:text-accent-blue transition-colors"
@@ -74,7 +78,7 @@ function Header({ theme, onToggle }: { theme: 'dark' | 'light'; onToggle: () => 
             Flower
           </a>
           <a
-            href="http://localhost:8001/docs"
+            href={`${acestepUrl}/docs`}
             target="_blank"
             rel="noreferrer"
             className="hover:text-accent-blue transition-colors"

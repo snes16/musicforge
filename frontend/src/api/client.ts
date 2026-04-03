@@ -13,7 +13,7 @@ export const apiClient = axios.create({
 // Types mirroring backend schemas
 export interface GenerateRequest {
   prompt: string
-  lyrics?: string
+  lyrics: string
   duration: number
   lora_name?: string
   style_preset?: string

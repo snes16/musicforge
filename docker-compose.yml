@@ -1,10 +1,8 @@
-version: "3.9"
-
 services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -18,12 +16,13 @@ services:
       context: ./acestep
       dockerfile: Dockerfile
     ports:
-      - "8001:8001"
+      - "${ACESTEP_PORT:-8001}:8001"
     volumes:
       - ./checkpoints:/app/checkpoints
       - ./acestep/lora:/app/lora
     environment:
-      - MOCK_ACESTEP=${MOCK_ACESTEP:-true}
+      # This container is always mock — real ACE-Step runs on the host at port 8001
+      - MOCK_ACESTEP=true
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 10s
@@ -36,7 +35,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     volumes:
       - ./audio_output:/app/audio_output
       - ./checkpoints:/app/checkpoints
@@ -47,6 +46,8 @@ services:
       - AUDIO_OUTPUT_DIR=/app/audio_output
       - MAX_AUDIO_SIZE_MB=${MAX_AUDIO_SIZE_MB:-50}
       - MOCK_GPU=${MOCK_GPU:-true}
+      - MOCK_ACESTEP=${MOCK_ACESTEP:-true}
+      - ACESTEP_ADAPTER_MAP=${ACESTEP_ADAPTER_MAP:-}
       - GPU_POLL_INTERVAL=${GPU_POLL_INTERVAL:-2}
       - API_SECRET_KEY=${API_SECRET_KEY:-change-me-in-production}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
@@ -74,6 +75,9 @@ services:
       - ACESTEP_CACHE_DIR=/app/acestep_cache
       - MOCK_GPU=${MOCK_GPU:-true}
       - MOCK_ACESTEP=${MOCK_ACESTEP:-false}
+      - ACESTEP_ADAPTER_MAP=${ACESTEP_ADAPTER_MAP:-}
+      - ACESTEP_ADAPTER_DIRS=${ACESTEP_ADAPTER_DIRS:-}
+      - ACESTEP_AUTO_UNLOAD_ON_BASE=${ACESTEP_AUTO_UNLOAD_ON_BASE:-true}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -83,7 +87,7 @@ services:
   flower:
     image: mher/flower:2.0
     ports:
-      - "5555:5555"
+      - "${FLOWER_HOST_PORT:-5555}:5555"
     environment:
       - CELERY_BROKER_URL=${REDIS_URL:-redis://redis:6379/0}
       - FLOWER_PORT=5555
@@ -97,10 +101,14 @@ services:
       dockerfile: Dockerfile
       args:
         - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+        - VITE_FLOWER_URL=${VITE_FLOWER_URL:-http://localhost:5555}
+        - VITE_ACESTEP_URL=${VITE_ACESTEP_URL:-http://localhost:8001}
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3000}:3000"
     environment:
       - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      - VITE_FLOWER_URL=${VITE_FLOWER_URL:-http://localhost:5555}
+      - VITE_ACESTEP_URL=${VITE_ACESTEP_URL:-http://localhost:8001}
     depends_on:
       - backend
 
